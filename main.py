@@ -5,7 +5,7 @@ from tkinter import ttk
 
 root = Tk()
 root.title('OMOP DB Migration')
-root.geometry("500x550")
+root.geometry("500x600")
 
 notebook = ttk.Notebook(root)
 notebook.pack(fill='both', expand=True, padx=10, pady=10)
@@ -117,4 +117,4 @@ myButton.pack(pady=20, anchor="w",padx=50)
 
 result_label = Label(backup_tab, text="", font=("Times New Roman", 10))
 result_label.pack(anchor="w", padx=50)
-root.mainloop()
+backup_tab.mainloop()
