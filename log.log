@@ -1,6 +1,0 @@
-2026-03-27 15:28:05,223 - INFO - Starting backup for DB: cdm_synthea on localhost
-2026-03-27 15:28:09,317 - ERROR - connection to server at "localhost" (::1), port 5432 failed: Connection refused (0x0000274D/10061)
-	Is the server running on that host and accepting TCP/IP connections?
-connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused (0x0000274D/10061)
-	Is the server running on that host and accepting TCP/IP connections?
-
