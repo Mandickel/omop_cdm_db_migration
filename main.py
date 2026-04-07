@@ -1,9 +1,12 @@
 import psycopg2
+##import pyodbc
 import os
 import threading
 import logging
+import csv
 from tkinter import *
 from tkinter import ttk
+import re
 
 
 logging.basicConfig(
@@ -14,7 +17,7 @@ logging.basicConfig(
 
 root = Tk()
 root.title('OMOP DB Migration')
-root.geometry("500x700")
+root.geometry("500x750")
 
 notebook = ttk.Notebook(root)
 notebook.pack(fill='both', expand=True, padx=10, pady=10)
@@ -111,8 +114,103 @@ def start_backup_thread():
     start_button.config(state="disabled")
     thread = threading.Thread(target=start_backup)
     thread.start()
+# ==================================================
+#  RESTORE (CSV → SQL Server)
+# ==================================================
+def update_ui_restore(i, table_name):
+    result_label_b.config(text=f"Restoring {table_name}...")
+    progress_b['value'] = i
 
-#--------------------------------User interface----------------------------------------------------
+def process_complete():
+    result_label_b.config(text="Restore completed successfully!")
+    progress_b['value'] = 0
+    start_button_b.config(state="normal")
+
+def process_error(msg):
+    result_label_b.config(text=f"Error: {msg}")
+    start_button_b.config(state="normal")
+    
+def execute_sql_file(cursor, file_path):
+    with open(file_path, "r", encoding="utf-8") as f:
+        sql = f.read()
+
+    statements = re.split(r'^\s*GO\s*$', sql, flags=re.MULTILINE | re.IGNORECASE)
+
+    for stmt in statements:
+        stmt = stmt.strip()
+        if stmt:
+            cursor.execute(stmt)
+
+def start_restore():
+    host = ServerName_r.get()
+    db = DBname_r.get()
+    schema = Schema_r.get()
+    user = Username_r.get()
+    password = Password_r.get()
+
+    ddl_folder = "ddl"
+    data_folder = db
+
+    try:
+        conn = pyodbc.connect(
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={host};DATABASE={db};UID={user};PWD={password}"
+        )
+        cursor = conn.cursor()
+
+        logging.info("Connected to SQL Server")
+
+        # ---------------- CREATE TABLES ----------------
+        for file in os.listdir(ddl_folder):
+            if file.endswith(".sql") and "index" not in file.lower():
+                execute_sql_file(cursor, os.path.join(ddl_folder, file))
+        conn.commit()
+
+        # ---------------- LOAD DATA ----------------
+        files = [f for f in os.listdir(data_folder) if f.endswith(".csv")]
+        root.after(0, lambda: progress_b.config(maximum=len(files)))
+
+        for i, file in enumerate(files, start=1):
+            table_name = file.replace(".csv", "")
+            filepath = os.path.abspath(os.path.join(data_folder, file))
+
+            root.after(0, update_ui_restore, i, table_name)
+
+            bulk_sql = f"""
+            BULK INSERT [{schema}].[{table_name}]
+            FROM '{filepath}'
+            WITH (
+                FIRSTROW = 2,
+                FIELDTERMINATOR = ',',
+                ROWTERMINATOR = '\\r\n',
+                TABLOCK,
+                CODEPAGE = '65001'
+            )
+            """
+            logging.info(f"Loaded {table_name}")
+            cursor.execute(bulk_sql)
+            conn.commit()
+
+        # ---------------- CREATE INDEXES ----------------
+        for file in os.listdir(ddl_folder):
+            if "index" in file.lower():
+                execute_sql_file(cursor, os.path.join(ddl_folder, file))
+
+        conn.commit()
+        conn.close()
+
+        root.after(0, process_complete)
+
+    except Exception as e:
+        logging.error(str(e))
+        root.after(0, process_error, str(e))
+
+def start_restore_thread():
+    start_button_b.config(state="disabled")
+    threading.Thread(target=start_restore).start()
+    
+# ----------------- BACKUPP TAB UI -----------------
+Label(backup_tab, text="OMOP CDM Backup", font=("Times New Roman", 12, "bold")).pack(pady=10)
 Label(backup_tab, text="Server name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
 Server_options = ["localhost"]
 ServerName = ttk.Combobox(backup_tab, values=Server_options, width=47, font=('Times New Roman', 12))
@@ -169,7 +267,63 @@ progress.pack(padx=50, pady=10, anchor="w")
 result_label = Label(backup_tab, text="", font=("Times New Roman", 10))
 result_label.pack(anchor="w", padx=50, pady=(5, 20))
 
+
 # ----------------- RESTORE TAB UI -----------------
-Label(restore_tab, text="Restore functionality coming soon!", font=("Times New Roman", 12, "bold")).pack(pady=20)
+Label(restore_tab, text="OMOP CDM Restoration", font=("Times New Roman", 12, "bold")).pack(pady=10)
+Label(restore_tab, text="Server name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
+Server_options = ["localhost"]
+ServerName_r = ttk.Combobox(restore_tab, values=Server_options, width=47, font=('Times New Roman', 12))
+ServerName_r.set("localhost")  # default value
+ServerName_r.pack(padx=50, pady=10, anchor="w")
+
+Label(restore_tab, text="DB name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
+DBname_options = ["cdm_synthea"]
+DBname_r = ttk.Combobox(restore_tab, values=DBname_options, width=47, font=('Times New Roman', 12))
+DBname_r.set("cdm_synthea")  # default value
+DBname_r.pack(padx=50, pady=10, anchor="w")
+
+Label(restore_tab, text="Schema name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
+Schema_options = ["dbo", "public", "result", "temp"]
+Schema_r = ttk.Combobox(restore_tab, values=Schema_options, width=47, font=('Times New Roman', 12))
+Schema_r.set("dbo")  # default value
+Schema_r.pack(padx=50, pady=10, anchor="w")
+
+Label(restore_tab, text="Port:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
+# Predefined port options
+port_options = ["5432", "5433", "5434"]
+Port_r = ttk.Combobox(restore_tab, values=port_options, width=47, font=('Times New Roman', 12))
+Port_r.set("5432")  # default value
+Port_r.pack(padx=50, pady=10, anchor="w")
+
+
+Label(restore_tab, text="Username:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
+Username_r = Entry(restore_tab, width=50, font=('Times New Roman', 12))
+Username_r.pack(padx=50, pady=10, anchor="w")
+
+Label(restore_tab, text="Password:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
+Password_r = Entry(restore_tab, width=50, show="*",font=('Times New Roman', 12))
+Password_r.pack(padx=50, pady=10, anchor="w")
+
+# Radiobutton – single choice from a set
+Label(restore_tab, text="RDBMS:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
+radio_var = StringVar(value="Microsoft SQL Server")
+rb1 = Radiobutton(restore_tab, text="PostgreSQL", variable=radio_var, value="PostgreSQL")
+rb2 = Radiobutton(restore_tab, text="Microsoft SQL Server", variable=radio_var, value="Microsoft SQL Server")
+rb3 = Radiobutton(restore_tab, text="MYSQL", variable=radio_var, value="MYSQL")
+rb1.pack(anchor="w",padx=50)
+rb2.pack(anchor="w",padx=50)
+rb3.pack(anchor="w",padx=50)
+
+# Start button
+start_button_b = Button(restore_tab, text="Start Restore", command=start_restore_thread)
+start_button_b.pack(pady=20, anchor="w", padx=50)
+
+# Progress bar
+progress_b = ttk.Progressbar(restore_tab, orient="horizontal", length=450, mode="determinate")
+progress_b.pack(padx=50, pady=10, anchor="w")
+
+# Result label
+result_label_b = Label(restore_tab, text="", font=("Times New Roman", 10))
+result_label_b.pack(anchor="w", padx=50, pady=(5, 20))
 
 root.mainloop()
