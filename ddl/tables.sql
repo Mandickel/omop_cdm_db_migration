@@ -9,8 +9,6 @@ BEGIN
 END
 GO
 
-USE [$(DBNAME)];
-GO
 --sql server CDM DDL Specification for OMOP Common Data Model 5.4
 
 --CREATE CDM TABLE person
@@ -569,7 +567,107 @@ CREATE TABLE [$(SCHEMA)].source_to_standard_vocab_map(
 CREATE TABLE [$(SCHEMA)].[_records] (
 			tbl_name varchar(25) NOT NULL,
 			total_records BIGINT NOT NULL);
+
 --CREATE CDM TABLE _records
 CREATE TABLE [$(SCHEMA)].[_max_ids] (
 			tbl_name varchar(25) NOT NULL,
 			total_records BIGINT NOT NULL);
+			
+			
+--CREATE CDM TABLE STEM
+CREATE TABLE [$(SCHEMA)].[stem] (
+			domain_id VARCHAR(20),
+			person_id BIGINT,
+			visit_occurrence_id BIGINT,
+			visit_detail_id BIGINT,
+			provider_id BIGINT,
+			id BIGINT,
+			concept_id INT,
+			source_value VARCHAR(250),
+			source_concept_id INT,
+			type_concept_id INT,
+			start_date DATE,
+			end_date DATE,
+			start_time TIME(6),
+			days_supply INT,
+			dose_unit_concept_id INT,
+			dose_unit_source_value VARCHAR(50),
+			effective_drug_dose VARCHAR(50),
+			lot_number VARCHAR(50),
+			modifier_source_value VARCHAR(50),
+			operator_concept_id INT,
+			qualifier_concept_id INT,
+			qualifier_source_value VARCHAR(50),
+			quantity FLOAT,
+			range_high FLOAT,
+			range_low FLOAT,
+			refills INT,
+			route_concept_id INT,
+			route_source_value VARCHAR(50),
+			sig VARCHAR(255),
+			stop_reason VARCHAR(20),
+			unique_device_id VARCHAR(50),
+			unit_concept_id INT,
+			unit_source_value VARCHAR(50),
+			value_as_concept_id INT,
+			value_as_number FLOAT,
+			value_as_string VARCHAR(50),
+			value_source_value VARCHAR(50),
+			anatomic_site_concept_id INT,
+			disease_status_concept_id INT,
+			specimen_source_id VARCHAR(50),
+			anatomic_site_source_value VARCHAR(50),
+			disease_status_source_value VARCHAR(50),
+			modifier_concept_id INT,
+			stem_source_table VARCHAR(255),
+			stem_source_id VARCHAR(255)
+);
+
+--CREATE TABLE 
+CREATE TABLE [$(SCHEMA)].[stem_source] (
+			domain_id VARCHAR(20),
+			person_id BIGINT,
+			visit_occurrence_id BIGINT,
+			visit_detail_id BIGINT,
+			provider_id BIGINT,
+			id BIGINT,
+			concept_id INT,
+			source_value VARCHAR(250),
+			source_concept_id INT,
+			type_concept_id INT,
+			start_date DATE,
+			end_date DATE,
+			start_time TIME(6),
+			days_supply INT,
+			dose_unit_concept_id INT,
+			dose_unit_source_value VARCHAR(50),
+			effective_drug_dose VARCHAR(50),
+			lot_number VARCHAR(50),
+			modifier_source_value VARCHAR(50),
+			operator_concept_id INT,
+			qualifier_concept_id INT,
+			qualifier_source_value VARCHAR(50),
+			quantity FLOAT,
+			range_high FLOAT,
+			range_low FLOAT,
+			refills INT,
+			route_concept_id INT,
+			route_source_value VARCHAR(50),
+			sig VARCHAR(255),
+			stop_reason VARCHAR(20),
+			unique_device_id VARCHAR(50),
+			unit_concept_id INT,
+			unit_source_value VARCHAR(50),
+			value_as_concept_id INT,
+			value_as_number FLOAT,
+			value_as_string VARCHAR(50),
+			value_source_value VARCHAR(50),
+			anatomic_site_concept_id INT,
+			disease_status_concept_id INT,
+			specimen_source_id VARCHAR(50),
+			anatomic_site_source_value VARCHAR(50),
+			disease_status_source_value VARCHAR(50),
+			modifier_concept_id INT,
+			stem_source_table VARCHAR(255),
+			stem_source_id VARCHAR(255)
+    );

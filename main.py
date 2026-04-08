@@ -1,5 +1,5 @@
 import psycopg2
-##import pyodbc
+import pyodbc
 import os
 import threading
 import logging
@@ -130,15 +130,20 @@ def process_error(msg):
     result_label_b.config(text=f"Error: {msg}")
     start_button_b.config(state="normal")
     
-def execute_sql_file(cursor, file_path):
+def execute_sql_file(cursor, file_path, db_name, schema_name):
+    """Execute a SQL file with $(DBNAME) and $(SCHEMA) replaced, splitting on GO statements"""
     with open(file_path, "r", encoding="utf-8") as f:
         sql = f.read()
 
+    sql = sql.replace("$(DBNAME)", db_name)
+    sql = sql.replace("$(SCHEMA)", schema_name)
+    
     statements = re.split(r'^\s*GO\s*$', sql, flags=re.MULTILINE | re.IGNORECASE)
 
     for stmt in statements:
         stmt = stmt.strip()
         if stmt:
+            print("Executing:", stmt[:100])  # DEBUG
             cursor.execute(stmt)
 
 def start_restore():
@@ -152,20 +157,55 @@ def start_restore():
     data_folder = db
 
     try:
+        # ---------------- STEP 1: CREATE DATABASE ----------------
         conn = pyodbc.connect(
             f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={host};DATABASE={db};UID={user};PWD={password}"
+            f"SERVER={host};"
+            f"DATABASE=master;"
+            f"Trusted_Connection=yes;"
         )
         cursor = conn.cursor()
-
-        logging.info("Connected to SQL Server")
-
-        # ---------------- CREATE TABLES ----------------
-        for file in os.listdir(ddl_folder):
-            if file.endswith(".sql") and "index" not in file.lower():
-                execute_sql_file(cursor, os.path.join(ddl_folder, file))
+        
+        cursor.execute(f"""
+        IF DB_ID('{db}') IS NULL
+            CREATE DATABASE [{db}]
+        """)
         conn.commit()
-
+        conn.close()
+        
+        logging.info("Connected to SQL Server")
+        
+        # ---------------- STEP 2: CONNECT TO TARGET DB ----------------      
+        conn = pyodbc.connect(
+            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
+            f"SERVER={host};"
+            f"DATABASE={db};"
+            f"Trusted_Connection=yes;"
+        )
+        cursor = conn.cursor()
+         
+        # ---------------- STEP 3: CREATE SCHEMA ----------------
+        cursor.execute(f"""
+        IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = '{schema}')
+        BEGIN
+            EXEC('CREATE SCHEMA [{schema}]')
+        END
+        """)
+        conn.commit()       
+        # ---------------- CREATE TABLES ----------------
+        files = os.listdir(ddl_folder)
+        # Ensure tables.sql runs first
+        files.sort(key=lambda x: (x != "tables.sql", x))
+        for file in files:
+            if file.endswith(".sql") and "index" not in file.lower():
+                execute_sql_file(cursor, os.path.join(ddl_folder, file), db, schema)
+                #print(cursor.fetchall())
+        conn.commit()
+    
+        # DEBUG: confirm tables exist
+        cursor.execute("SELECT name FROM sys.tables")
+        logging.info(f"Tables: {cursor.fetchall()}")
+        
         # ---------------- LOAD DATA ----------------
         files = [f for f in os.listdir(data_folder) if f.endswith(".csv")]
         root.after(0, lambda: progress_b.config(maximum=len(files)))
@@ -180,10 +220,8 @@ def start_restore():
             BULK INSERT [{schema}].[{table_name}]
             FROM '{filepath}'
             WITH (
+                FORMAT = 'CSV',
                 FIRSTROW = 2,
-                FIELDTERMINATOR = ',',
-                ROWTERMINATOR = '\\r\n',
-                TABLOCK,
                 CODEPAGE = '65001'
             )
             """
@@ -194,7 +232,7 @@ def start_restore():
         # ---------------- CREATE INDEXES ----------------
         for file in os.listdir(ddl_folder):
             if "index" in file.lower():
-                execute_sql_file(cursor, os.path.join(ddl_folder, file))
+                execute_sql_file(cursor, os.path.join(ddl_folder, file), db, schema)
 
         conn.commit()
         conn.close()
