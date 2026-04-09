@@ -1,7 +1,4 @@
 
-USE [$(DBNAME)];
-GO
-
 --sql server CDM Primary Key Constraints for OMOP Common Data Model 5.4
 ALTER TABLE [$(SCHEMA)].person ADD CONSTRAINT xpk_person PRIMARY KEY NONCLUSTERED (person_id);
 ALTER TABLE [$(SCHEMA)].observation_period ADD CONSTRAINT xpk_observation_period PRIMARY KEY NONCLUSTERED (observation_period_id);

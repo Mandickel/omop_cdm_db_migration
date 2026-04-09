@@ -3,365 +3,303 @@ import pyodbc
 import os
 import threading
 import logging
-import csv
-from tkinter import *
-from tkinter import ttk
 import re
+from tkinter import *
+from tkinter import ttk, messagebox
 
-
+# ---------------- LOGGING ----------------
 logging.basicConfig(
-    filename="log.log",
+    filename="Log.log",
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
+    format="%(asctime)s | %(levelname)s | %(message)s",
+    filemode="a"
 )
 
-root = Tk()
-root.title('OMOP DB Migration')
-root.geometry("500x750")
+# ---------------- HELPERS ----------------
+def validate_identifier(name):
+    if not re.match(r'^[A-Za-z0-9_]+$', name):
+        raise ValueError(f"Invalid identifier: {name}")
+    return name
 
-notebook = ttk.Notebook(root)
-notebook.pack(fill='both', expand=True, padx=10, pady=10)
-
-backup_tab = Frame(notebook)
-restore_tab = Frame(notebook)
-
-notebook.add(backup_tab, text="Backup")
-notebook.add(restore_tab, text="Restore")
-
-# ---------------- FUNCTIONS ----------------
-
-def update_ui(i, table_name):
-    result_label.config(text=f"Exporting {table_name}...")
-    progress['value'] = i
-
-def backup_complete():
-    result_label.config(text="Backup completed successfully!")
-    progress['value'] = 0
-    start_button.config(state="normal")
-
-def backup_error(msg):
-    result_label.config(text=f"Error: {msg}")
-    start_button.config(state="normal")
-
-def start_backup():
-    # ---- Get values from fields ----
-    host = ServerName.get()
-    db = DBname.get()
-    schema = Schema.get()
-    port = int(Port.get())
-    user = Username.get()
-    password = Password.get()
-
-    logging.info(f"Starting backup for DB: {db} on {host}")
-
-    try:
-        # ---- Connect to PostgreSQL ----
-        conn = psycopg2.connect(
-            host=host,
-            dbname=db,
-            user=user,
-            password=password,
-            port=port
-        )
-        logging.info("Database connection established")
-        cursor = conn.cursor()
-
-        
-
-        # ---- Create backup folder ----
-        os.makedirs(db, exist_ok=True)
-
-        # ---- Get tables ----
-        cursor.execute("""
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = %s
-        """, (schema,))
-
-        tables = cursor.fetchall()
-        logging.info(f"Found {len(tables)} tables in schema '{schema}'")
-
-        root.after(0, lambda: progress.config(maximum=len(tables)))
-
-        # Export tables
-        for i, table in enumerate(tables, start=1):
-            table_name = table[0]
-            
-            logging.info(f"Exporting {table_name}")
-            
-            root.after(0, update_ui, i, table_name)
-            #result_label.config(text=f"Exporting {table_name}...")
-            #root.update_idletasks()
-
-            with open(f"{db}/{table_name}.csv", "w", encoding="utf-8", newline="\r\n") as f:
-                cursor.copy_expert(
-                    f'COPY "{schema}"."{table_name}" TO STDOUT WITH CSV HEADER',
-                    f
-                )
-        conn.close()
-        logging.info("Backup completed successfully")
-        root.after(0, backup_complete)
-            #progress['value'] = i
-            #root.update_idletasks()
-
-        
-    except Exception as e:
-        logging.error(str(e))
-        root.after(0, backup_error, str(e))
+def build_sql_server_name(host, port):
+    host = host.strip()
+    if "\\" in host or "," in host:
+        return host
+    if port:
+        return f"{host},{port}"
+    return host
 
 
-def start_backup_thread():
-    start_button.config(state="disabled")
-    thread = threading.Thread(target=start_backup)
-    thread.start()
-# ==================================================
-#  RESTORE (CSV → SQL Server)
-# ==================================================
-def update_ui_restore(i, table_name):
-    result_label_b.config(text=f"Restoring {table_name}...")
-    progress_b['value'] = i
+# ---------------- MAIN APP ----------------
+class MigrationApp:
 
-def process_complete():
-    result_label_b.config(text="Restore completed successfully!")
-    progress_b['value'] = 0
-    start_button_b.config(state="normal")
+    def __init__(self, root):
+        self.root = root
+        self.root.title('OMOP DB Migration')
+        self.root.geometry("500x600")
+        self.setup_ui()
 
-def process_error(msg):
-    result_label_b.config(text=f"Error: {msg}")
-    start_button_b.config(state="normal")
-    
-def execute_sql_file(cursor, file_path, db_name, schema_name):
-    """Execute a SQL file with $(DBNAME) and $(SCHEMA) replaced, splitting on GO statements"""
-    with open(file_path, "r", encoding="utf-8") as f:
-        sql = f.read()
+    # ---------------- UI ----------------
+    def setup_ui(self):
+        notebook = ttk.Notebook(self.root)
+        notebook.pack(fill='both', expand=True, padx=10, pady=10)
 
-    sql = sql.replace("$(DBNAME)", db_name)
-    sql = sql.replace("$(SCHEMA)", schema_name)
-    
-    statements = re.split(r'^\s*GO\s*$', sql, flags=re.MULTILINE | re.IGNORECASE)
+        self.backup_tab = Frame(notebook)
+        self.restore_tab = Frame(notebook)
 
-    for stmt in statements:
-        stmt = stmt.strip()
-        if stmt:
-            print("Executing:", stmt[:100])  # DEBUG
-            cursor.execute(stmt)
+        notebook.add(self.backup_tab, text="Backup")
+        notebook.add(self.restore_tab, text="Restore")
 
-def start_restore():
-    host = ServerName_r.get()
-    db = DBname_r.get()
-    schema = Schema_r.get()
-    user = Username_r.get()
-    password = Password_r.get()
+        self.build_backup_ui()
+        self.build_restore_ui()
 
-    ddl_folder = "ddl"
-    data_folder = db
+    def create_field(self, parent, label, default):
+        Label(parent, text=label).pack(anchor="w", padx=50)
+        combo = ttk.Combobox(parent, values=[default], width=47)
+        combo.set(default)
+        combo.pack(padx=50, pady=5)
+        return combo
 
-    try:
-        # ---------------- STEP 1: CREATE DATABASE ----------------
-        conn = pyodbc.connect(
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={host};"
-            f"DATABASE=master;"
-            f"Trusted_Connection=yes;"
-        )
-        cursor = conn.cursor()
-        
-        cursor.execute(f"""
-        IF DB_ID('{db}') IS NULL
-            CREATE DATABASE [{db}]
-        """)
-        conn.commit()
-        conn.close()
-        
-        logging.info("Connected to SQL Server")
-        
-        # ---------------- STEP 2: CONNECT TO TARGET DB ----------------      
-        conn = pyodbc.connect(
-            f"DRIVER={{ODBC Driver 17 for SQL Server}};"
-            f"SERVER={host};"
-            f"DATABASE={db};"
-            f"Trusted_Connection=yes;"
-        )
-        cursor = conn.cursor()
-         
-        # ---------------- STEP 3: CREATE SCHEMA ----------------
-        cursor.execute(f"""
-        IF NOT EXISTS (SELECT * FROM sys.schemas WHERE name = '{schema}')
-        BEGIN
-            EXEC('CREATE SCHEMA [{schema}]')
-        END
-        """)
-        conn.commit()       
-        # ---------------- CREATE TABLES ----------------
-        files = os.listdir(ddl_folder)
-        # Ensure tables.sql runs first
-        files.sort(key=lambda x: (x != "tables.sql", x))
-        for file in files:
-            if file.endswith(".sql") and "index" not in file.lower():
-                execute_sql_file(cursor, os.path.join(ddl_folder, file), db, schema)
-                #print(cursor.fetchall())
-        conn.commit()
-    
-        # DEBUG: confirm tables exist
-        cursor.execute("SELECT name FROM sys.tables")
-        logging.info(f"Tables: {cursor.fetchall()}")
-        
-        # ---------------- LOAD DATA ----------------
-        files = [f for f in os.listdir(data_folder) if f.endswith(".csv")]
-        root.after(0, lambda: progress_b.config(maximum=len(files)))
+    def create_entry(self, parent, label, show=None):
+        Label(parent, text=label).pack(anchor="w", padx=50)
+        entry = Entry(parent, width=50, show=show)
+        entry.pack(padx=50, pady=5)
+        return entry
 
-        for i, file in enumerate(files, start=1):
-            table_name = file.replace(".csv", "")
-            filepath = os.path.abspath(os.path.join(data_folder, file))
+    def log_and_update(self, message):
+        logging.info(message)
+        self.root.after(0, lambda: self.result_label_r.config(text=message))
 
-            root.after(0, update_ui_restore, i, table_name)
+    # ---------------- BACKUP ----------------
+    def build_backup_ui(self):
+        Label(self.backup_tab, text="OMOP CDM Backup", font=("Arial", 12, "bold")).pack(pady=10)
 
-            bulk_sql = f"""
-            BULK INSERT [{schema}].[{table_name}]
-            FROM '{filepath}'
-            WITH (
-                FORMAT = 'CSV',
-                FIRSTROW = 2,
-                CODEPAGE = '65001'
+        self.ServerName = self.create_field(self.backup_tab, "Server:", "localhost")
+        self.DBname = self.create_field(self.backup_tab, "Database:", "cdm_synthea")
+        self.Schema = self.create_field(self.backup_tab, "Schema:", "public")
+        self.Port = self.create_field(self.backup_tab, "Port:", "5432")
+
+        self.Username = self.create_entry(self.backup_tab, "Username:")
+        self.Password = self.create_entry(self.backup_tab, "Password:", show="*")
+
+        self.start_button = Button(self.backup_tab, text="Start Backup", command=self.start_backup_thread)
+        self.start_button.pack(pady=20)
+
+        self.progress = ttk.Progressbar(self.backup_tab, length=450)
+        self.progress.pack(pady=10)
+
+        self.result_label = Label(self.backup_tab, text="")
+        self.result_label.pack()
+
+    def start_backup_thread(self):
+        self.start_button.config(state="disabled")
+        threading.Thread(target=self.start_backup).start()
+
+    def start_backup(self):
+        failed_tables = []
+
+        try:
+            conn = psycopg2.connect(
+                host=self.ServerName.get(),
+                dbname=validate_identifier(self.DBname.get()),
+                user=self.Username.get(),
+                password=self.Password.get(),
+                port=int(self.Port.get())
             )
-            """
-            logging.info(f"Loaded {table_name}")
-            cursor.execute(bulk_sql)
+            cursor = conn.cursor()
+
+            db = self.DBname.get()
+            schema = validate_identifier(self.Schema.get())
+
+            os.makedirs(db, exist_ok=True)
+
+            # ONLY real tables (not views)
+            cursor.execute("""
+                SELECT table_name 
+                FROM information_schema.tables
+                WHERE table_schema = %s
+                AND table_type = 'BASE TABLE'
+                ORDER BY table_name
+            """, (schema,))
+
+            tables = cursor.fetchall()
+
+            logging.info(f"Found {len(tables)} tables")
+
+            self.root.after(0, lambda: self.progress.config(maximum=len(tables)))
+
+            for i, (table,) in enumerate(tables, 1):
+                try:
+                    logging.info(f"Starting export: {table}")
+
+                    self.root.after(0, lambda t=table: self.result_label.config(text=f"Exporting {t}..."))
+
+                    with open(f"{db}/{table}.csv", "w", encoding="utf-8") as f:
+                        cursor.copy_expert(
+                            f'COPY "{schema}"."{table}" TO STDOUT WITH CSV HEADER',
+                            f
+                        )
+
+                    logging.info(f"SUCCESS: {table}")
+
+                except Exception as table_error:
+                    logging.error(f"FAILED: {table} | {table_error}")
+                    failed_tables.append(table)
+
+                finally:
+                    self.root.after(0, lambda v=i: self.progress.config(value=v))
+
+            conn.close()
+
+            # FINAL STATUS
+            if failed_tables:
+                msg = f"Backup completed with errors ({len(failed_tables)} failed)"
+                logging.warning(msg)
+                logging.warning(f"Failed tables: {failed_tables}")
+            else:
+                msg = "Backup completed successfully"
+                logging.info(msg)
+
+            self.root.after(0, lambda: self.result_label.config(text=msg))
+
+        except Exception as e:
+            logging.error(f"FATAL ERROR: {e}")
+            self.root.after(0, lambda err=e: messagebox.showerror("Error", str(err)))
+
+        finally:
+            self.root.after(0, lambda: self.start_button.config(state="normal"))
+            
+    # ---------------- RESTORE ----------------
+    def build_restore_ui(self):
+        Label(self.restore_tab, text="OMOP CDM Restore", font=("Arial", 12, "bold")).pack(pady=10)
+
+        self.ServerName_r = self.create_field(self.restore_tab, "Server:", "localhost")
+        self.DBname_r = self.create_field(self.restore_tab, "Database:", "cdm_synthea")
+        self.Schema_r = self.create_field(self.restore_tab, "Schema:", "dbo")
+        self.Port_r = self.create_field(self.restore_tab, "Port:", "")
+
+        self.Username_r = self.create_entry(self.restore_tab, "Username:")
+        self.Password_r = self.create_entry(self.restore_tab, "Password:", show="*")
+
+        self.start_button_r = Button(self.restore_tab, text="Start Restore", command=self.start_restore_thread)
+        self.start_button_r.pack(pady=20)
+
+        self.progress_r = ttk.Progressbar(self.restore_tab, length=450)
+        self.progress_r.pack(pady=10)
+
+        self.result_label_r = Label(self.restore_tab, text="")
+        self.result_label_r.pack()
+
+    def start_restore_thread(self):
+        self.start_button_r.config(state="disabled")
+        threading.Thread(target=self.start_restore).start()
+
+    def start_restore(self):
+        try:
+            server = build_sql_server_name(self.ServerName_r.get(), self.Port_r.get())
+            db = validate_identifier(self.DBname_r.get())
+            schema = validate_identifier(self.Schema_r.get())
+
+            user = self.Username_r.get()
+            pwd = self.Password_r.get()
+
+            conn_str = f"DRIVER={{ODBC Driver 17 for SQL Server}};SERVER={server};DATABASE={db};"
+            conn_str += f"UID={user};PWD={pwd};" if user else "Trusted_Connection=yes;"
+
+            conn = pyodbc.connect(conn_str, autocommit=False)
+            cursor = conn.cursor()
+
+            ddl_folder = "ddl"
+            data_folder = db
+
+            # ---- STEP 1 ----
+            self.log_and_update("STEP 1: Creating tables...")
+            self.create_tables(cursor, ddl_folder, db, schema)
             conn.commit()
 
-        # ---------------- CREATE INDEXES ----------------
-        for file in os.listdir(ddl_folder):
-            if "index" in file.lower():
-                execute_sql_file(cursor, os.path.join(ddl_folder, file), db, schema)
+            # ---- STEP 2 ----
+            self.log_and_update("STEP 2: Loading data...")
+            self.load_data(cursor, data_folder, schema)
+            conn.commit()
 
-        conn.commit()
-        conn.close()
+            # ---- STEP 3 ----
+            self.log_and_update("STEP 3: Creating PK + indexes...")
+            self.create_pk_indexes(cursor, ddl_folder, db, schema)
+            conn.commit()
 
-        root.after(0, process_complete)
+            # ---- STEP 4 ----
+            self.log_and_update("STEP 4: Creating foreign keys...")
+            self.create_foreign_keys(cursor, ddl_folder, db, schema)
+            conn.commit()
 
-    except Exception as e:
-        logging.error(str(e))
-        root.after(0, process_error, str(e))
+            conn.close()
+            self.root.after(0, lambda: self.result_label_r.config(text="Restore complete"))
 
-def start_restore_thread():
-    start_button_b.config(state="disabled")
-    threading.Thread(target=start_restore).start()
-    
-# ----------------- BACKUPP TAB UI -----------------
-Label(backup_tab, text="OMOP CDM Backup", font=("Times New Roman", 12, "bold")).pack(pady=10)
-Label(backup_tab, text="Server name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-Server_options = ["localhost"]
-ServerName = ttk.Combobox(backup_tab, values=Server_options, width=47, font=('Times New Roman', 12))
-ServerName.set("localhost")  # default value
-ServerName.pack(padx=50, pady=10, anchor="w")
+        except Exception as e:
+            logging.error(str(e))
+            try:
+                conn.rollback()
+            except:
+                pass
+            self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
 
-Label(backup_tab, text="DB name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-DBname_options = ["cdm_synthea"]
-DBname = ttk.Combobox(backup_tab, values=DBname_options, width=47, font=('Times New Roman', 12))
-DBname.set("cdm_synthea")  # default value
-DBname.pack(padx=50, pady=10, anchor="w")
+        finally:
+            self.root.after(0, lambda: self.start_button_r.config(state="normal"))
 
-Label(backup_tab, text="Schema name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-Schema_options = ["public", "result", "temp"]
-Schema = ttk.Combobox(backup_tab, values=Schema_options, width=47, font=('Times New Roman', 12))
-Schema.set("public")  # default value
-Schema.pack(padx=50, pady=10, anchor="w")
+    # ---------------- STEPS ----------------
+    def create_tables(self, cursor, folder, db, schema):
+        files = [f for f in os.listdir(folder) if "table" in f.lower()]
+        for file in files:
+            self.log_and_update(f"Creating tables from {file}")
+            self.execute_sql_file(cursor, os.path.join(folder, file), db, schema)
 
-Label(backup_tab, text="Port:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-# Predefined port options
-port_options = ["5432", "5433", "5434"]
-Port = ttk.Combobox(backup_tab, values=port_options, width=47, font=('Times New Roman', 12))
-Port.set("5432")  # default value
-Port.pack(padx=50, pady=10, anchor="w")
+    def create_pk_indexes(self, cursor, folder, db, schema):
+        files = [f for f in os.listdir(folder) if "pk" in f.lower() or "index" in f.lower()]
+        for file in files:
+            self.log_and_update(f"Creating PK/index from {file}")
+            self.execute_sql_file(cursor, os.path.join(folder, file), db, schema)
 
+    def create_foreign_keys(self, cursor, folder, db, schema):
+        files = [f for f in os.listdir(folder) if "fk" in f.lower()]
+        for file in files:
+            self.log_and_update(f"Creating FK from {file}")
+            self.execute_sql_file(cursor, os.path.join(folder, file), db, schema)
 
-Label(backup_tab, text="Username:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-Username = Entry(backup_tab, width=50, font=('Times New Roman', 12))
-Username.pack(padx=50, pady=10, anchor="w")
+    def load_data(self, cursor, folder, schema):
+        files = [f for f in os.listdir(folder) if f.endswith(".csv")]
+        total = len(files)
 
-Label(backup_tab, text="Password:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-Password = Entry(backup_tab, width=50, show="*",font=('Times New Roman', 12))
-Password.pack(padx=50, pady=10, anchor="w")
+        self.root.after(0, lambda: self.progress_r.config(maximum=total))
 
-# Radiobutton – single choice from a set
-Label(backup_tab, text="RDBMS:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-radio_var = StringVar(value="PostgreSQL")
-rb1 = Radiobutton(backup_tab, text="PostgreSQL", variable=radio_var, value="PostgreSQL")
-rb2 = Radiobutton(backup_tab, text="Microsoft SQL Server", variable=radio_var, value="Microsoft SQL Server")
-rb3 = Radiobutton(backup_tab, text="MYSQL", variable=radio_var, value="MYSQL")
-rb1.pack(anchor="w",padx=50)
-rb2.pack(anchor="w",padx=50)
-rb3.pack(anchor="w",padx=50)
+        for i, file in enumerate(files, 1):
+            table = file.replace(".csv", "")
+            path = os.path.abspath(os.path.join(folder, file))
 
-# Start button
-start_button = Button(backup_tab, text="Start Backup", command=start_backup_thread)
-start_button.pack(pady=20, anchor="w", padx=50)
+            self.log_and_update(f"[{i}/{total}] Loading {table}...")
 
-# Progress bar
-progress = ttk.Progressbar(backup_tab, orient="horizontal", length=450, mode="determinate")
-progress.pack(padx=50, pady=10, anchor="w")
+            cursor.execute(f"""
+                BULK INSERT [{schema}].[{table}]
+                FROM '{path}'
+                WITH (FORMAT='CSV', FIRSTROW=2, CODEPAGE='65001')
+            """)
 
-# Result label
-result_label = Label(backup_tab, text="", font=("Times New Roman", 10))
-result_label.pack(anchor="w", padx=50, pady=(5, 20))
+            logging.info(f"Loaded {table}")
+            self.root.after(0, lambda v=i: self.progress_r.config(value=v))
 
+    def execute_sql_file(self, cursor, path, db, schema):
+        logging.info(f"Executing {path}")
+        with open(path, "r", encoding="utf-8") as f:
+            sql = f.read()
 
-# ----------------- RESTORE TAB UI -----------------
-Label(restore_tab, text="OMOP CDM Restoration", font=("Times New Roman", 12, "bold")).pack(pady=10)
-Label(restore_tab, text="Server name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-Server_options = ["localhost"]
-ServerName_r = ttk.Combobox(restore_tab, values=Server_options, width=47, font=('Times New Roman', 12))
-ServerName_r.set("localhost")  # default value
-ServerName_r.pack(padx=50, pady=10, anchor="w")
+        sql = sql.replace("$(DBNAME)", db).replace("$(SCHEMA)", schema)
+        statements = re.split(r'^\s*GO\s*$', sql, flags=re.MULTILINE)
 
-Label(restore_tab, text="DB name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-DBname_options = ["cdm_synthea"]
-DBname_r = ttk.Combobox(restore_tab, values=DBname_options, width=47, font=('Times New Roman', 12))
-DBname_r.set("cdm_synthea")  # default value
-DBname_r.pack(padx=50, pady=10, anchor="w")
+        for i, stmt in enumerate(statements, 1):
+            if stmt.strip():
+                cursor.execute(stmt)
+                logging.info(f"{path} - statement {i} executed")
 
-Label(restore_tab, text="Schema name:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-Schema_options = ["dbo", "public", "result", "temp"]
-Schema_r = ttk.Combobox(restore_tab, values=Schema_options, width=47, font=('Times New Roman', 12))
-Schema_r.set("dbo")  # default value
-Schema_r.pack(padx=50, pady=10, anchor="w")
-
-Label(restore_tab, text="Port:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-# Predefined port options
-port_options = ["5432", "5433", "5434"]
-Port_r = ttk.Combobox(restore_tab, values=port_options, width=47, font=('Times New Roman', 12))
-Port_r.set("5432")  # default value
-Port_r.pack(padx=50, pady=10, anchor="w")
-
-
-Label(restore_tab, text="Username:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-Username_r = Entry(restore_tab, width=50, font=('Times New Roman', 12))
-Username_r.pack(padx=50, pady=10, anchor="w")
-
-Label(restore_tab, text="Password:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-Password_r = Entry(restore_tab, width=50, show="*",font=('Times New Roman', 12))
-Password_r.pack(padx=50, pady=10, anchor="w")
-
-# Radiobutton – single choice from a set
-Label(restore_tab, text="RDBMS:", font=("Times New Roman", 10, "bold")).pack(anchor="w",padx=50)
-radio_var = StringVar(value="Microsoft SQL Server")
-rb1 = Radiobutton(restore_tab, text="PostgreSQL", variable=radio_var, value="PostgreSQL")
-rb2 = Radiobutton(restore_tab, text="Microsoft SQL Server", variable=radio_var, value="Microsoft SQL Server")
-rb3 = Radiobutton(restore_tab, text="MYSQL", variable=radio_var, value="MYSQL")
-rb1.pack(anchor="w",padx=50)
-rb2.pack(anchor="w",padx=50)
-rb3.pack(anchor="w",padx=50)
-
-# Start button
-start_button_b = Button(restore_tab, text="Start Restore", command=start_restore_thread)
-start_button_b.pack(pady=20, anchor="w", padx=50)
-
-# Progress bar
-progress_b = ttk.Progressbar(restore_tab, orient="horizontal", length=450, mode="determinate")
-progress_b.pack(padx=50, pady=10, anchor="w")
-
-# Result label
-result_label_b = Label(restore_tab, text="", font=("Times New Roman", 10))
-result_label_b.pack(anchor="w", padx=50, pady=(5, 20))
-
+# ---------------- RUN ----------------
+root = Tk()
+app = MigrationApp(root)
 root.mainloop()

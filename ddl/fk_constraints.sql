@@ -1,7 +1,4 @@
 
-USE [$(DBNAME)];
-GO
-
 --sql server CDM Foreign Key Constraints for OMOP Common Data Model 5.4
 ALTER TABLE [$(SCHEMA)].person ADD CONSTRAINT fpk_person_gender_concept_id FOREIGN KEY (gender_concept_id) REFERENCES [$(SCHEMA)].CONCEPT (CONCEPT_ID);
 ALTER TABLE [$(SCHEMA)].person ADD CONSTRAINT fpk_person_race_concept_id FOREIGN KEY (race_concept_id) REFERENCES [$(SCHEMA)].CONCEPT (CONCEPT_ID);
