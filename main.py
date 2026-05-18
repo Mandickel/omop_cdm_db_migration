@@ -219,7 +219,7 @@ class MigrationApp:
 
             # ---- STEP 2 ----
             self.log_and_update("STEP 2: Loading data...")
-            self.load_data(cursor, data_folder, schema)
+            self.load_data(cursor,  conn, data_folder, schema)
             conn.commit()
 
             # ---- STEP 3 ----
@@ -265,14 +265,14 @@ class MigrationApp:
             self.log_and_update(f"Creating FK from {file}")
             self.execute_sql_file(cursor, os.path.join(folder, file), db, schema)
 
-    def load_data(self, cursor, folder, schema):
-        files = [f for f in os.listdir(folder) if f.endswith(".csv")]
+    def load_data(self, cursor, conn, folder, schema):
+        files = sorted([f for f in os.listdir(folder) if f.lower().endswith(".csv")])
         total = len(files)
 
-        self.root.after(0, lambda: self.progress_r.config(maximum=total))
+        self.root.after(0, lambda: self.progress_r.config(maximum=total, value=0))
 
         for i, file in enumerate(files, 1):
-            table = file.replace(".csv", "")
+            table = os.path.splitext(file)[0]
             path = os.path.abspath(os.path.join(folder, file))
 
             self.log_and_update(f"[{i}/{total}] Loading {table}...")
@@ -280,9 +280,9 @@ class MigrationApp:
             cursor.execute(f"""
                 BULK INSERT [{schema}].[{table}]
                 FROM '{path}'
-                WITH (FORMAT='CSV', FIRSTROW=2, CODEPAGE='65001')
+                WITH (FORMAT='CSV', FIRSTROW=2, CODEPAGE='65001', TABLOCK)
             """)
-
+            conn.commit()
             logging.info(f"Loaded {table}")
             self.root.after(0, lambda v=i: self.progress_r.config(value=v))
 
