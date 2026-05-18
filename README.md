@@ -1,14 +1,60 @@
 # OMOP DB Migration Tool
-This program is a small desktop application for moving a PostgreSQL database into Microsoft SQL Server by using a two-step process:
+The OMOP DB Migration Tool is a desktop application used to migrate data from a PostgreSQL database into Microsoft SQL Server.
 
-**1. Backup:** export each PostgreSQL table to a CSV file.
+The application performs the migration in two stages:
 
-**2. Restore:** create the SQL Server schema and bulk-load the CSV files into SQL Server.
+**1. Backup:** 
+	- Exports PostgreSQL tables into CSV files.
 
-## What the program does
-The app has two tabs:
+**2. Restore:** 
+	- Creates SQL Server tables.
+	- Imports CSV data into SQL Server.
+	- Applies indexes and constraints.
 
-**Backup tab**
+## System Requirements
+
+Before using the application, ensure the following software is installed.
+
+**Required Software**
+
+**Python**
+
+Python 3.8 or later is recommended.
+
+*Download*
+
+https://www.python.org/downloads/
+
+**PostgreSQL**
+Access to a PostgreSQL source database.
+
+*Download:*
+
+https://www.postgresql.org/download/
+
+**Microsoft SQL Server**
+
+Access to a SQL Server destination database.
+
+*Download*
+
+https://www.microsoft.com/en-gb/sql-server/
+
+**ODBC Driver for SQL Server**
+
+Install:
+
+	- ODBC Driver 17 for SQL Server
+	
+Download:
+
+https://learn.microsoft.com/en-us/sql/connect/odbc/download-odbc-driver-for-sql-server?view=sql-server-ver17
+
+**Required Python Packages**
+
+Install the required libraries:
+
+pip install psycopg2 pyodbc
 
 Connects to PostgreSQL and exports every base table in the chosen schema to a CSV file.
 
