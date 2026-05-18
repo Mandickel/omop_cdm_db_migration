@@ -22,6 +22,9 @@ Connects to PostgreSQL and exports every base table in the chosen schema to a CS
 		your_project/
 		│
 		├── main.py
+		├── Log.log
+		├── doc/
+		├── ddl/
 		│
 		└── dbname/
 			├── person.csv
