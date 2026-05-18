@@ -9,4 +9,5 @@ This program is a small desktop application for moving a PostgreSQL database int
 The app has two tabs:
 
 **Backup tab**
-<img src="doc/2.1.png" width="600">
+
+<img src="doc/2.1.png" width="400">
