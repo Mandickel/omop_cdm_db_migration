@@ -29,7 +29,7 @@ Connects to PostgreSQL and exports every base table in the chosen schema to a CS
 		├── doc/
 		├── ddl/
 		│
-		└── dbname/
+		└── **dbname/**
 			├── person.csv
 			├── visit_occurrence.csv
 			└── condition_occurrence.csv
